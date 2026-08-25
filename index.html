@@ -233,5 +233,250 @@ window.__supaDelete = async function(table, id){
   }catch(e){ console.error('delete failed', e); }
 };
 </script>
+
+<style>
+th.sortable{ cursor:pointer; user-select:none; position:relative; }
+th.sortable:hover{ background:#fff7ed !important; }
+th.sortable::after{ content:' ↕'; opacity:0.3; font-size:10px; }
+th.sortable.asc::after{ content:' ↑'; opacity:1; color:#1c1917; }
+th.sortable.desc::after{ content:' ↓'; opacity:1; color:#1c1917; }
+#sort-toast{
+  position:fixed; bottom:80px; right:12px; z-index:99999;
+  background:#1c1917; color:white; padding:8px 14px; border-radius:999px;
+  font-size:11px; display:none; align-items:center; gap:6px;
+}
+</style>
+<div id="sort-toast"><span>✓</span><span id="sort-toast-text">เรียงแล้ว</span></div>
+<script>
+(function(){
+  window.__sortState = JSON.parse(localStorage.getItem('__sort_state')||'{"containers":{"key":"closeDateTH","dir":"desc","columnIndex":1},"production":{"key":"date","dir":"desc","columnIndex":0},"labor":{"key":"date","dir":"desc","columnIndex":0},"consumables":{"key":"date","dir":"desc","columnIndex":0},"utilities":{"key":"date","dir":"desc","columnIndex":0}}');
+  
+  function saveState(){
+    localStorage.setItem('__sort_state', JSON.stringify(window.__sortState));
+  }
+  
+  function getActiveTab(){
+    const active = document.querySelector('[data-tab].bg-stone-900');
+    return active ? active.getAttribute('data-tab') : 'containers';
+  }
+  
+  function getTableForTab(tab){
+    const main = document.querySelector('main');
+    if(!main) return null;
+    const tables = main.querySelectorAll('table');
+    for(let t of tables){
+      if(t.offsetParent !== null) return t;
+    }
+    return tables[0] || null;
+  }
+  
+  function parseValue(text){
+    text = (text||'').trim();
+    if(!text || text==='—' || text==='-') return '';
+    if(text.match(/\d{2}\/\d{2}\/\d{4}/)){
+      const [day, month, year] = text.split('/');
+      const d = new Date(`${year}-${month}-${day}`);
+      if(!isNaN(d)) return d.getTime();
+    }
+    if(text.match(/\d{4}-\d{2}-\d{2}/)){
+      const d = new Date(text);
+      if(!isNaN(d)) return d.getTime();
+    }
+    const num = parseFloat(text.replace(/,/g,'').replace(/ บาท| ตัน| ลูก| ชม\.| kg.*| วัน/g,'').trim());
+    if(!isNaN(num) && /[0-9]/.test(text) && text.length < 20){
+      return num;
+    }
+    return text.toLowerCase();
+  }
+  
+  function sortTable(tab, key, dir, columnIndex){
+    const table = getTableForTab(tab);
+    if(!table) return;
+    const tbody = table.querySelector('tbody');
+    if(!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    if(rows.length <=1) return;
+    
+    if(columnIndex===undefined){
+      const colMap = {
+        containers: {containerNo:0, closeDateTH:1, arrivalPortDate:2, transitDays:3, coconutType:4, status:5, date:1},
+        production: {date:0, containerId:1, containerNo:1, coconutsInput:2, goodWaterTons:3, badPieces:4, badWaterEst:5, yieldPerCoconut:6},
+        labor: {date:0, containerId:1, containerNo:1, workersCount:2, startTime:3, totalCost:5},
+        consumables: {date:0, containerId:1, itemName:2, quantity:3, unit:4, cost:5},
+        utilities: {date:0, containerId:1, electricityMeter:2, waterMeter:3, totalElectricity:4, totalWater:5, avgPerContainer:6}
+      };
+      columnIndex = (colMap[tab] && colMap[tab][key]) ?? 0;
+    }
+    
+    rows.sort((a,b)=>{
+      const aCell = a.cells[columnIndex];
+      const bCell = b.cells[columnIndex];
+      const aVal = parseValue(aCell ? aCell.innerText : '');
+      const bVal = parseValue(bCell ? bCell.innerText : '');
+      if(aVal < bVal) return dir==='asc' ? -1 : 1;
+      if(aVal > bVal) return dir==='asc' ? 1 : -1;
+      return 0;
+    });
+    
+    rows.forEach((row, i)=>{
+      row.style.opacity='0';
+      row.style.transform='translateY(-4px)';
+      tbody.appendChild(row);
+      setTimeout(()=>{
+        row.style.transition='all 0.2s ease';
+        row.style.opacity='1';
+        row.style.transform='translateY(0)';
+      }, i*15);
+    });
+    
+    window.__sortState[tab] = {key, dir, columnIndex};
+    saveState();
+    updateHeaders(tab, key, dir);
+    showToast(`เรียง ${dir==='desc'?'บน→ล่าง ↓':'ล่าง→บน ↑'}`);
+  }
+  
+  function updateHeaders(tab, activeKey, dir){
+    const table = getTableForTab(tab);
+    if(!table) return;
+    const ths = table.querySelectorAll('thead th');
+    ths.forEach((th, idx)=>{
+      th.classList.remove('asc','desc');
+      th.classList.add('sortable');
+      const colMap = {
+        containers: ['containerNo','closeDateTH','arrivalPortDate','transitDays','coconutType','status'],
+        production: ['date','containerId','coconutsInput','goodWaterTons','badPieces','badWaterEst','yieldPerCoconut'],
+        labor: ['date','containerId','workersCount','startTime','hours','totalCost'],
+        consumables: ['date','containerId','itemName','quantity','unit','cost'],
+        utilities: ['date','containerId','electricityMeter','waterMeter','totalElectricity','totalWater','avgPerContainer']
+      };
+      const keys = colMap[tab] || [];
+      if(keys[idx]===activeKey){
+        th.classList.add(dir);
+      }
+    });
+  }
+  
+  function showToast(text){
+    const toast = document.getElementById('sort-toast');
+    const txt = document.getElementById('sort-toast-text');
+    if(!toast) return;
+    txt.textContent = text;
+    toast.style.display='flex';
+    setTimeout(()=>{ toast.style.display='none'; }, 2000);
+  }
+  
+  function makeHeadersSortable(){
+    const tab = getActiveTab();
+    const table = getTableForTab(tab);
+    if(!table) return;
+    const ths = table.querySelectorAll('thead th');
+    ths.forEach((th, idx)=>{
+      if(th.dataset.sortBound) return;
+      if(th.innerText.trim()==='') return;
+      th.classList.add('sortable');
+      th.dataset.sortBound='1';
+      th.addEventListener('click', ()=>{
+        const colMap = {
+          containers: ['containerNo','closeDateTH','arrivalPortDate','transitDays','coconutType','status'],
+          production: ['date','containerId','coconutsInput','goodWaterTons','badPieces','badWaterEst','yieldPerCoconut'],
+          labor: ['date','containerId','workersCount','startTime','hours','totalCost'],
+          consumables: ['date','containerId','itemName','quantity','unit','cost'],
+          utilities: ['date','containerId','electricityMeter','waterMeter','totalElectricity','totalWater','avgPerContainer']
+        };
+        const keys = colMap[tab] || [];
+        const key = keys[idx] || 'date';
+        const current = window.__sortState[tab] || {key:'date', dir:'desc'};
+        let newDir = 'desc';
+        if(current.key===key){
+          newDir = current.dir==='desc' ? 'asc' : 'desc';
+        }
+        sortTable(tab, key, newDir, idx);
+      });
+    });
+    const saved = window.__sortState[tab];
+    if(saved){
+      updateHeaders(tab, saved.key, saved.dir);
+    }
+  }
+  
+  let lastTab = null;
+  let initialSorted = {};
+  setInterval(()=>{
+    const tab = getActiveTab();
+    if(tab!==lastTab){
+      lastTab=tab;
+      setTimeout(()=>{
+        makeHeadersSortable();
+        const saved = window.__sortState[tab];
+        if(saved && !initialSorted[tab]){
+          // Auto sort on first view of tab - no reload, instant
+          const table = getTableForTab(tab);
+          if(table){
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            if(rows.length>1){
+              rows.sort((a,b)=>{
+                const colIdx = saved.columnIndex ?? (tab==='containers'?1:0);
+                const aVal = parseValue(a.cells[colIdx]?.innerText||'');
+                const bVal = parseValue(b.cells[colIdx]?.innerText||'');
+                if(aVal < bVal) return saved.dir==='asc' ? -1 : 1;
+                if(aVal > bVal) return saved.dir==='asc' ? 1 : -1;
+                return 0;
+              });
+              rows.forEach(r=>tbody.appendChild(r));
+              updateHeaders(tab, saved.key, saved.dir);
+              initialSorted[tab]=true;
+            }
+          }
+        } else if(!initialSorted[tab]){
+          // Default sort desc for new tab
+          const saved2 = window.__sortState[tab];
+          if(saved2){
+            const table = getTableForTab(tab);
+            if(table){
+              const tbody = table.querySelector('tbody');
+              const rows = Array.from(tbody.querySelectorAll('tr'));
+              if(rows.length>1){
+                const colIdx = saved2.columnIndex ?? (tab==='containers'?1:0);
+                rows.sort((a,b)=>{
+                  const aVal = parseValue(a.cells[colIdx]?.innerText||'');
+                  const bVal = parseValue(b.cells[colIdx]?.innerText||'');
+                  if(aVal < bVal) return saved2.dir==='asc' ? -1 : 1;
+                  if(aVal > bVal) return saved2.dir==='asc' ? 1 : -1;
+                  return 0;
+                });
+                rows.forEach(r=>tbody.appendChild(r));
+                initialSorted[tab]=true;
+              }
+            }
+          }
+        }
+      }, 300);
+    } else {
+      makeHeadersSortable();
+    }
+  }, 500);
+  
+  const controlHtml = `
+  <div id="sort-control-noreload" style="position:fixed; bottom:50px; right:12px; z-index:99998; background:white; border:1px solid #e7e5e4; border-radius:999px; padding:6px 10px; font-size:11px; display:flex; gap:6px; align-items:center; box-shadow:0 2px 12px rgba(0,0,0,0.1); font-family:ui-sans-serif">
+    <span style="color:#78716c">เรียง:</span>
+    <button id="sort-desc" style="background:#1c1917; color:white; border-radius:999px; padding:4px 10px; border:none; cursor:pointer">บนลงล่าง ↓</button>
+    <button id="sort-asc" style="background:#f5f5f4; border-radius:999px; padding:4px 10px; border:1px solid #e7e5e4; cursor:pointer">ล่างขึ้นบน ↑</button>
+  </div>`;
+  document.addEventListener('DOMContentLoaded', ()=>{
+    document.body.insertAdjacentHTML('beforeend', controlHtml);
+    document.getElementById('sort-desc')?.addEventListener('click', ()=>{
+      const tab = getActiveTab();
+      const state = window.__sortState[tab] || {key: tab==='containers'?'closeDateTH':'date', dir:'desc', columnIndex: tab==='containers'?1:0};
+      sortTable(tab, state.key, 'desc', state.columnIndex);
+    });
+    document.getElementById('sort-asc')?.addEventListener('click', ()=>{
+      const tab = getActiveTab();
+      const state = window.__sortState[tab] || {key: tab==='containers'?'closeDateTH':'date', dir:'asc', columnIndex: tab==='containers'?1:0};
+      sortTable(tab, state.key, 'asc', state.columnIndex);
+    });
+  });
+})();
+</script>
 </body>
 </html>
